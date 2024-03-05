@@ -8,7 +8,8 @@
 * **High Performance.**
 * **Easy Integration**
 * **Customizability**
-* The project is structured into four main files:
+  
+*** _The project is structured into four main files:_**
 
 - `main.py`: The entry point of the project, orchestrating the training, evaluation, and prediction processes.
 - `nets.py`: Contains the definitions of neural network models or architectures.
