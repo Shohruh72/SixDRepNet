@@ -1,5 +1,5 @@
 # 6DRepNet: Head Pose Estimation
-![Vizualization](https://github.com/Shohruh72/HPENet/blob/main/output/Result.gif)
+![Vizualization](https://github.com/Shohruh72/SixDRepNet/blob/master/weights/Result.gif)
 
 ## Features
 
