@@ -23,13 +23,13 @@ The model achieved the following Mean Absolute Error (MAE) metrics across differ
 
 | Backbone  | Epochs | Pitch | Yaw | Roll | Params (M) | FLOPS (B) | Pretrained weights |
 |:---------:|:------:|------:|----:|-----:|-----------:|----------:|-------------------:|
-| RepVGG-A0 |  90    |  5.4  | 4.3 | 3.8  |     9.1    |    1.5    |                    |
-| RepVGG-A1 |  90    |  5.2  | 3.9 | 3.7  |     14     |    2.6    |                    |
-| **RepVGG-A2** |  **90**    |  **4.8**  | **3.7** | **3.4**  |    28.2    |    5.7    |                    |
-| RepVGG-B0 |  90    |  5.0  | 3.9 | 3.5  |    15.8    |    3.4    |                    ||
-| RepVGG-B1 |  90    |  5.0  | 3.9 | 3.5  |    57.4    |   13.1    |                    |
+| RepVGG-A0 |  90    |  5.4  | 4.3 | 3.8  |     9.1    |    1.5    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_a0.pt)|
+| RepVGG-A1 |  90    |  5.2  | 3.9 | 3.7  |     14     |    2.6    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_a1.pt)                   |
+| **RepVGG-A2** |  **90**    |  **4.8**  | **3.7** | **3.4**  |    28.2    |    5.7    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_a2.pt)                    |
+| RepVGG-B0 |  90    |  5.0  | 3.9 | 3.5  |    15.8    |    3.4    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b0.pt)                    ||
+| RepVGG-B1 |  90    |  5.0  | 3.9 | 3.5  |    57.4    |   13.1    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1.pt)                   |
 | RepVGG-B1G2 |  90  |       |     |      |    45.7    |    9.8    |                    |
-| RepVGG-B1G4 |  90  |  4.8  | 3.6 | 3.4  |    39.9    |    8.1    |                    |
+| RepVGG-B1G4 |  90  |  4.8  | 3.6 | 3.4  |    39.9    |    8.1    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1g4.pt)                    |
 | RepVGG-B2 |  90    |       |     |      |     89     |   20.4    |                    |
 | RepVGG-B2G4 |  90  |       |     |      |    61.7    |   12.6    |                    |
 | RepVGG-B3 |  90    |       |     |      |    123     |   29.2    |                    |
