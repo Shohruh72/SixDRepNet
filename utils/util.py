@@ -1,48 +1,54 @@
-from pathlib import Path
+# https://github.com/Shohruh72
+import math
+import random
+import numpy as np
+from PIL import Image
 
 import torch
 import torchvision.transforms as T
 
 
-class GeodesicLoss(torch.nn.Module):
-    def __init__(self, eps=1e-7):
-        super().__init__()
-        self.eps = eps
-
-    def forward(self, m1, m2):
-        m = torch.bmm(m1, m2.transpose(1, 2))  # batch*3*3
-
-        cos = (m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2] - 1) / 2
-        theta = torch.acos(torch.clamp(cos, -1 + self.eps, 1 - self.eps))
-
-        return torch.mean(theta)
+def setup_seed():
+    """
+    Setup random seed.
+    """
+    random.seed(0)
+    np.random.seed(0)
+    torch.manual_seed(0)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
-def compute_euler(rotation_matrices):
-    batch = rotation_matrices.shape[0]
-    R = rotation_matrices
-    sy = torch.sqrt(R[:, 0, 0] * R[:, 0, 0] + R[:, 1, 0] * R[:, 1, 0])
-    singular = sy < 1e-6
-    singular = singular.float()
+def setup_multi_processes():
+    """
+    Setup multi-processing environment variables.
+    """
+    import cv2
+    from os import environ
+    from platform import system
 
-    x = torch.atan2(R[:, 2, 1], R[:, 2, 2])
-    y = torch.atan2(-R[:, 2, 0], sy)
-    z = torch.atan2(R[:, 1, 0], R[:, 0, 0])
+    # set multiprocess start method as `fork` to speed up the training
+    if system() != 'Windows':
+        torch.multiprocessing.set_start_method('fork', force=True)
 
-    xs = torch.atan2(-R[:, 1, 2], R[:, 1, 1])
-    ys = torch.atan2(-R[:, 2, 0], sy)
-    zs = R[:, 1, 0] * 0
+    # disable opencv multithreading to avoid system being overloaded
+    cv2.setNumThreads(0)
 
-    gpu = rotation_matrices.get_device()
-    if gpu < 0:
-        out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(torch.device('cpu'))
-    else:
-        out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(torch.device('cuda:%d' % gpu))
-    out_euler[:, 0] = x * (1 - singular) + xs * singular
-    out_euler[:, 1] = y * (1 - singular) + ys * singular
-    out_euler[:, 2] = z * (1 - singular) + zs * singular
+    # setup OMP threads
+    if 'OMP_NUM_THREADS' not in environ:
+        environ['OMP_NUM_THREADS'] = '1'
 
-    return out_euler
+    # setup MKL threads
+    if 'MKL_NUM_THREADS' not in environ:
+        environ['MKL_NUM_THREADS'] = '1'
+
+
+def strip_optimizer(filename):
+    x = torch.load(filename, map_location=torch.device('cpu'))
+    x['model'].half()  # to FP16
+    for p in x['model'].parameters():
+        p.requires_grad = False
+    torch.save(x, filename)
 
 
 def normalize_vector(v):
@@ -59,7 +65,6 @@ def normalize_vector(v):
     return v
 
 
-# u, v batch*n
 def cross_product(u, v):
     batch = u.shape[0]
     # print (u.shape)
@@ -89,56 +94,87 @@ def compute_rotation(poses):
     return matrix
 
 
-def download_weights(model_name, save_dir):
-    import os
-    import gdown
-    net_name = {
-        'RepVGG-A0': '13Gn8rq1PztoMEgK7rCOPMUYHjGzk-w11',
-        'RepVGG-A1': '19lX6lNKSwiO5STCvvu2xRTKcPsSfWAO1',
-        'RepVGG-A2': '1PvtYTOX4gd-1VHX8LoT7s6KIyfTKOf8G',
-        'RepVGG-B0': '18g7YziprUky7cX6L6vMJ_874PP8tbtKx',
-        'RepVGG-B1': '1VlCfXXiaJjNjzQBy3q7C3H2JcxoL0fms',
-        'RepVGG-B1g2': '1PL-m9n3g0CEPrSpf3KwWEOf9_ZG-Ux1Z',
-        'RepVGG-B1g4': '1WXxhyRDTgUjgkofRV1bLnwzTsFWRwZ0k',
-        'RepVGG-B2': '1cFgWJkmf9U1L1UmJsA8UT__kyd3xuY_y',
-        'RepVGG-B2g4': '1LZ61o5XH6u1n3_tXIgKII7XqKoqqracI',
-        'RepVGG-B3': '1wBpq5317iPKk3-qblBHnx35bY_WumAlU',
-        'RepVGG-B3g4': '1s7PxIP-oYB1a94_qzHyzfXAbbI24GYQ8',
-    }
-    weight_id = net_name.get(model_name)
-    url = f'https://drive.google.com/uc?id={weight_id}'
-    output = os.path.join(save_dir, 'weights', model_name + '.pth')
-    gdown.download(url, output, quiet=False)
+def compute_euler(rotation_matrices):
+    batch = rotation_matrices.shape[0]
+    R = rotation_matrices
+    sy = torch.sqrt(R[:, 0, 0] * R[:, 0, 0] + R[:, 1, 0] * R[:, 1, 0])
+    singular = sy < 1e-6
+    singular = singular.float()
+
+    x = torch.atan2(R[:, 2, 1], R[:, 2, 2])
+    y = torch.atan2(-R[:, 2, 0], sy)
+    z = torch.atan2(R[:, 1, 0], R[:, 0, 0])
+
+    xs = torch.atan2(-R[:, 1, 2], R[:, 1, 1])
+    ys = torch.atan2(-R[:, 2, 0], sy)
+    zs = R[:, 1, 0] * 0
+
+    gpu = rotation_matrices.get_device()
+    if gpu < 0:
+        out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(torch.device('cpu'))
+    else:
+        out_euler = torch.autograd.Variable(torch.zeros(batch, 3)).to(torch.device('cuda:%d' % gpu))
+    out_euler[:, 0] = x * (1 - singular) + xs * singular
+    out_euler[:, 1] = y * (1 - singular) + ys * singular
+    out_euler[:, 2] = z * (1 - singular) + zs * singular
+
+    return out_euler
 
 
-def load_model(args, for_training=True):
-    from models.nets import HPE
+def resample():
+    return random.choice((Image.BILINEAR, Image.BICUBIC))
 
-    file_path = Path(f'{args.save_dir}/weights/{args.model_name}.pth')
-    if not file_path.exists():
-        print('Downloading ImageNet weights...')
-        download_weights(args.model_name, args.save_dir)
 
-    model = HPE(args.model_name, file_path, False, for_training).cuda()
-    if not for_training:
-        saved_dict = torch.load(f'{args.save_dir}/weights/best.pt')
-        if 'model_state_dict' in saved_dict:
-            model.load_state_dict(saved_dict['model_state_dict'])
+class Resize:
+    def __init__(self, size: int):
+        self.size = size
+
+    def __call__(self, image):
+        size = self.size
+        i, j, h, w = self.params(image.size)
+        image = image.crop((j, i, j + w, i + h))
+        return image.resize([size, size], resample())
+
+    @staticmethod
+    def params(size):
+        scale = (0.8, 1.0)
+        ratio = (3. / 4., 4. / 3.)
+        for _ in range(10):
+            target_area = random.uniform(*scale) * size[0] * size[1]
+            aspect_ratio = math.exp(random.uniform(*(math.log(ratio[0]), math.log(ratio[1]))))
+
+            w = int(round(math.sqrt(target_area * aspect_ratio)))
+            h = int(round(math.sqrt(target_area / aspect_ratio)))
+
+            if w <= size[0] and h <= size[1]:
+                i = random.randint(0, size[1] - h)
+                j = random.randint(0, size[0] - w)
+                return i, j, h, w
+
+        if (size[0] / size[1]) < min(ratio):
+            w = size[0]
+            h = int(round(w / min(ratio)))
+        elif (size[0] / size[1]) > max(ratio):
+            h = size[1]
+            w = int(round(h * max(ratio)))
         else:
-            model.load_state_dict(saved_dict)
-    return model
+            w = size[0]
+            h = size[1]
+        i = (size[1] - h) // 2
+        j = (size[0] - w) // 2
+        return i, j, h, w
 
 
-def get_transforms(for_training=True):
+def get_transforms(args, for_training=True):
     if for_training:
         return T.Compose([
-            T.RandomResizedCrop(size=224, scale=(0.8, 1)),
+            Resize(size=args.input_size),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
     else:
         return T.Compose([
-            T.Resize(256),
+            T.Resize(args.input_size + 32),
             T.CenterCrop(224),
             T.ToTensor(),
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
@@ -188,3 +224,56 @@ def plot_pose_cube(img, yaw, pitch, roll, tdx=None, tdy=None, size=150.):
     cv2.line(img, (int(x3), int(y3)), (int(x3 + x2 - face_x), int(y3 + y2 - face_y)), (0, 255, 0), 2)
 
     return img
+
+
+class AverageMeter:
+    def __init__(self):
+        self.num = 0
+        self.sum = 0
+        self.avg = 0
+
+    def update(self, v, n):
+        self.num = self.num + n
+        self.sum = self.sum + v * n
+        self.avg = self.sum / self.num
+
+
+class CosineLR:
+    def __init__(self, args, optimizer):
+        self.min_lr = 1E-6
+        self.epochs = args.epochs
+        self.learning_rates = [x['lr'] for x in optimizer.param_groups]
+
+    def step(self, epoch, optimizer):
+        param_groups = optimizer.param_groups
+        for param_group, lr in zip(param_groups, self.learning_rates):
+            alpha = math.cos(math.pi * epoch / self.epochs)
+            lr = 0.5 * (lr - self.min_lr) * (1 + alpha)
+            param_group['lr'] = self.min_lr + lr
+
+
+class ComputeLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.eps = 1E-7
+
+    def forward(self, outputs, targets):
+        m = torch.bmm(targets, outputs.transpose(1, 2))
+        cos = (m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2] - 1) / 2
+        theta = torch.acos(torch.clamp(cos, -1 + self.eps, 1 - self.eps))
+
+        return torch.mean(theta)
+
+
+class GeodesicLoss(torch.nn.Module):
+    def __init__(self, eps=1e-7):
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, m1, m2):
+        m = torch.bmm(m1, m2.transpose(1, 2))  # batch*3*3
+
+        cos = (m[:, 0, 0] + m[:, 1, 1] + m[:, 2, 2] - 1) / 2
+        theta = torch.acos(torch.clamp(cos, -1 + self.eps, 1 - self.eps))
+
+        return torch.mean(theta)

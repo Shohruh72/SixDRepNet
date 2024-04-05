@@ -1,86 +1,133 @@
+# https://github.com/Shohruh72
 import argparse
+import copy
 import csv
-import time
+import os
 
 import cv2
-import numpy as np
 import tqdm
-from PIL import Image
+from timm import utils
+from torch.utils import data
 from face_detection import RetinaFace
-from torch.utils.data import DataLoader
 
-from utils.datasets import Datasets
+from nets import nn
 from utils.util import *
+from utils.datasets import Datasets
+
+
+def lr(args):
+    return 5E-5 * args.batch_size * args.world_size / 64
 
 
 def train(args):
-    model = load_model(args, True).cuda()
-    dataset = Datasets(f'{args.data_dir}', '300W_LP', get_transforms(True), True)
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=4)
+    weight = f'./weights/{args.model_name}.pth'
+    model = nn.HPE(args.model_name, weight, False, True).cuda()
 
-    criterion = GeodesicLoss().cuda()
-    optimizer = torch.optim.Adam(model.parameters(), args.lr)
-    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[10, 20], gamma=0.5)
+    optimizer = torch.optim.Adam(model.parameters(), lr(args))
 
-    best_loss = float('inf')
-    with open('outputs/weights/step.csv', 'w') as log:
-        logger = csv.DictWriter(log, fieldnames=['epoch', 'Loss', 'Pitch', 'Yaw', 'Roll'])
-        logger.writeheader()
+    ema = nn.EMA(model) if args.local_rank == 0 else None
+
+    sampler = None
+    dataset = Datasets(f'{args.data_dir}', '300W_LP', get_transforms(args, True), True)
+
+    if args.distributed:
+        sampler = data.distributed.DistributedSampler(dataset)
+
+    loader = data.DataLoader(dataset, args.batch_size, sampler is None, sampler=sampler, num_workers=8, pin_memory=True)
+
+    if args.distributed:
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
+        model = torch.nn.parallel.DistributedDataParallel(module=model,
+                                                          device_ids=[args.local_rank],
+                                                          output_device=args.local_rank)
+
+    best = float('inf')
+    num_steps = len(loader)
+    criterion = ComputeLoss().cuda()
+    amp_scale = torch.cuda.amp.GradScaler()
+    scheduler = CosineLR(args, optimizer)
+    with open('weights/step.csv', 'w') as log:
+        if args.local_rank == 0:
+            logger = csv.DictWriter(log, fieldnames=['epoch', 'Loss', 'Pitch', 'Yaw', 'Roll'])
+            logger.writeheader()
         for epoch in range(args.epochs):
-            print(('\n' + '%10s' * 3) % ('epoch', 'memory', 'loss'))
-            p_bar = tqdm.tqdm(loader, total=len(loader))
             model.train()
-            total_loss = 0
-            for i, (samples, labels) in enumerate(p_bar):
+
+            if args.distributed:
+                sampler.set_epoch(epoch)
+
+            p_bar = loader
+            avg_loss = AverageMeter()
+
+            if args.local_rank == 0:
+                print(('\n' + '%10s' * 3) % ('epoch', 'memory', 'loss'))
+                p_bar = tqdm.tqdm(iterable=p_bar, total=num_steps)
+
+            for samples, labels in p_bar:
                 samples = samples.cuda()
                 labels = labels.cuda()
-                optimizer.zero_grad()
-                outputs = model(samples)
+
+                with torch.cuda.amp.autocast():
+                    outputs = model(samples)
                 loss = criterion(outputs, labels)
-                loss.backward()
-                optimizer.step()
 
-                total_loss += loss.item()
-                memory = f'{torch.cuda.memory_reserved() / 1E9:.3g}G'
-                s = ('%10s' * 2 + '%10.3g') % (f'{epoch + 1}/{args.epochs}', memory, loss.item())
-                p_bar.set_description(s)
+                optimizer.zero_grad()
 
-            avg_loss = total_loss / len(loader)
-            val_loss, val_pitch, val_yaw, val_roll = test(args, model)
-            scheduler.step()
+                amp_scale.scale(loss).backward()
 
-            logger.writerow({'Pitch': str(f'{val_pitch:.3f}'),
-                             'Yaw': str(f'{val_yaw:.3f}'),
-                             'Roll': str(f'{val_roll:.3f}'),
-                             'Loss': str(f'{avg_loss:.3f}'),
-                             'epoch': str(epoch + 1).zfill(3)})
-            log.flush()
-            if val_loss < best_loss:
-                best_loss = val_loss
-                torch.save(model.state_dict(), f'{args.save_dir}/weights/best.pt')
-                print(f'Epoch {epoch + 1}: New best model saved with val_loss: {best_loss:.3f}')
+                amp_scale.step(optimizer)
+                amp_scale.update(None)
+                if ema:
+                    ema.update(model)
 
-            torch.save(model.state_dict(), f'{args.save_dir}/weights/last.pt')
-            scheduler.step()
+                if args.distributed:
+                    loss = utils.reduce_tensor(loss.data, args.world_size)
+                avg_loss.update(loss.item(), samples.size(0))
+                if args.local_rank == 0:
+                    memory = f'{torch.cuda.memory_reserved() / 1E9:.3g}G'
+                    s = ('%10s' * 2 + '%10.3g') % (f'{epoch + 1}/{args.epochs}', memory, avg_loss.avg)
+                    p_bar.set_description(s)
 
+            scheduler.step(epoch, optimizer)
+
+            if args.local_rank == 0:
+                last = test(args, ema.ema)
+
+                logger.writerow({'Pitch': str(f'{last[0]:.3f}'),
+                                 'Yaw': str(f'{last[1]:.3f}'),
+                                 'Roll': str(f'{last[2]:.3f}'),
+                                 'Loss': str(f'{avg_loss.avg:.3f}'),
+                                 'epoch': str(epoch + 1).zfill(3)})
+                log.flush()
+                is_best = sum(last) < best
+
+                if is_best:
+                    best = sum(last)
+                save = {'epoch': epoch, 'model': copy.deepcopy(ema.ema).half()}
+                torch.save(save, f'weights/last.pt')
+
+                if is_best:
+                    torch.save(save, f'weights/best.pt')
+                del save
+
+    if args.local_rank == 0:
+        strip_optimizer('./weights/best.pt')
+        strip_optimizer('./weights/last.pt')
     torch.cuda.empty_cache()
-    print('Training completed.')
 
 
 @torch.no_grad()
 def test(args, model=None):
-    dataset = Datasets(f'{args.data_dir}', 'AFLW2K', get_transforms(False), False)
-    loader = DataLoader(dataset, batch_size=64)
     if model is None:
-        model = load_model(args, False).cuda()
-        # model = model.float()
-    model.half()
+        model = torch.load('./weights/best.pt', 'cuda')
+        model = model['model'].float()
     model.eval()
 
+    dataset = Datasets(f'{args.data_dir}', 'AFLW2K', get_transforms(args, False), False)
+    loader = data.DataLoader(dataset, batch_size=2)
     total, y_error, p_error, r_error = 0, 0.0, 0.0, 0.0
     for sample, label in tqdm.tqdm(loader, ('%10s' * 3) % ('Pitch', 'Yaw', 'Roll')):
         sample = sample.cuda()
-        sample = sample.half()
         total += label.size(0)
 
         p_gt = label[:, 0].float() * 180 / np.pi
@@ -113,106 +160,97 @@ def test(args, model=None):
                                                     torch.abs(r_pred - 180 - r_gt))), 0)[0])
 
     p_error, y_error, r_error = p_error / total, y_error / total, r_error / total
-    avg_error = (p_error + y_error + r_error) / (3 * total)
-    print(('%10.3g' * 3) % (p_error, y_error, r_error))
+    print(('%10s' * 3) % (f'{p_error:.3f}', f'{y_error:.3f}', f'{r_error:.3f}'))
 
     model.float()  # for training
-    return avg_error, p_error, y_error, r_error
+    return p_error, y_error, r_error
 
 
 @torch.no_grad()
-def inference(args):
-    model = load_model(args, False).cuda()
+def demo(args):
+    model = torch.load('./weights/best.pt', map_location='cuda')['model'].float()
+    model.half()
     model.eval()
     detector = RetinaFace(0)
-
     cap = cv2.VideoCapture(0)
-    frame_width = int(cap.get(3))
-    frame_height = int(cap.get(4))
-    out = cv2.VideoWriter(f'{args.save_dir}/output.avi', cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), 25,
-                          (frame_width, frame_height))
-    # Check if the webcam is opened correctly
+
     if not cap.isOpened():
         raise IOError("Cannot open webcam")
 
-    with torch.no_grad():
-        while True:
-            ret, frame = cap.read()
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        faces = detector(frame)
 
-            faces = detector(frame)
+        for box, landmarks, score in faces:
+            if score < .95:
+                continue
 
-            for box, landmarks, score in faces:
+            x_min, y_min = int(box[0]), int(box[1])
+            x_max, y_max = int(box[2]), int(box[3])
+            bbox_width = abs(x_max - x_min)
+            bbox_height = abs(y_max - y_min)
 
-                # Print the location of each face in this image
-                if score < .95:
-                    continue
-                x_min = int(box[0])
-                y_min = int(box[1])
-                x_max = int(box[2])
-                y_max = int(box[3])
-                bbox_width = abs(x_max - x_min)
-                bbox_height = abs(y_max - y_min)
+            x_min = max(0, x_min - int(0.2 * bbox_height))
+            y_min = max(0, y_min - int(0.2 * bbox_width))
+            x_max = x_max + int(0.2 * bbox_height)
+            y_max = y_max + int(0.2 * bbox_width)
 
-                x_min = max(0, x_min - int(0.2 * bbox_height))
-                y_min = max(0, y_min - int(0.2 * bbox_width))
-                x_max = x_max + int(0.2 * bbox_height)
-                y_max = y_max + int(0.2 * bbox_width)
+            img = Image.fromarray(frame[y_min:y_max, x_min:x_max]).convert('RGB')
+            img = get_transforms(args, False)(img).cuda()
+            img = img.unsqueeze(0)
+            img = img.cuda().half()
 
-                img = frame[y_min:y_max, x_min:x_max]
-                img = Image.fromarray(img)
-                img = img.convert('RGB')
-                img = get_transforms(False)(img)
+            c = cv2.waitKey(1)
+            if c == 27:
+                break
+            output = model(img)
+            output = compute_euler(output) * 180 / np.pi
+            p_pred_deg = output[:, 0].cpu()
+            y_pred_deg = output[:, 1].cpu()
+            r_pred_deg = output[:, 2].cpu()
 
-                img = torch.Tensor(img[None, :]).cuda()
+            plot_pose_cube(frame, y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5 * (
+                    x_max - x_min)), y_min + int(.5 * (y_max - y_min)), size=bbox_width)
+            print(p_pred_deg)
+        cv2.imshow("Demo", frame)
+        if cv2.waitKey(1) == 27:
+            break
 
-                c = cv2.waitKey(1)
-                if c == 27:
-                    break
-
-                start = time.time()
-                R_pred = model(img)
-                end = time.time()
-                print('Head pose estimation: %2f ms' % ((end - start) * 1000.))
-
-                euler = compute_euler(
-                    R_pred) * 180 / np.pi
-                p_pred_deg = euler[:, 0].cpu()
-                y_pred_deg = euler[:, 1].cpu()
-                r_pred_deg = euler[:, 2].cpu()
-
-                # utils.draw_axis(frame, y_pred_deg, p_pred_deg, r_pred_deg, left+int(.5*(right-left)), top, size=100)
-                plot_pose_cube(frame, y_pred_deg, p_pred_deg, r_pred_deg, x_min + int(.5 * (
-                        x_max - x_min)), y_min + int(.5 * (y_max - y_min)), size=bbox_width)
-
-            cv2.imshow("Demo", frame)
-            out.write(frame)
-            cv2.waitKey(5)
-        cap.release()
-        out.release()
-
-        # Closes all the frames
-        cv2.destroyAllWindows()
+    cap.release()
+    cv2.destroyAllWindows()
 
 
 def main():
     parser = argparse.ArgumentParser(description='Head Pose Estimation')
-    parser.add_argument('--model_name', type=str, default='RepVGG-A2')
+    parser.add_argument('--model_name', type=str, default='a2')
     parser.add_argument('--data_dir', type=str, default='../../Datasets/HPE')
-    parser.add_argument('--save-dir', type=str, default='./outputs')
-    parser.add_argument('--epochs', type=int, default=100)
-    parser.add_argument('--lr', type=float, default=0.0001)
-    parser.add_argument('--batch-size', type=int, default=64)
+    parser.add_argument('--epochs', type=int, default=90)
+    parser.add_argument('--local_rank', default=0, type=int)
+    parser.add_argument('--batch-size', type=int, default=128)
+    parser.add_argument('--input-size', type=int, default=224)
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument('--inference', default=True, action='store_true')
-
+    parser.add_argument('--demo', action='store_true')
     args = parser.parse_args()
+
+    args.world_size = int(os.getenv('WORLD_SIZE', 1))
+    args.distributed = int(os.getenv('WORLD_SIZE', 1)) > 1
+    setup_seed()
+    setup_multi_processes()
+    os.makedirs('weights', exist_ok=True)
+
+    if args.distributed:
+        torch.cuda.set_device(device=args.local_rank)
+        torch.distributed.init_process_group(backend='nccl', init_method='env://')
+
     if args.train:
         train(args)
     if args.test:
         test(args)
-    if args.inference:
-        inference(args)
+    if args.demo:
+        demo(args)
 
 
 if __name__ == "__main__":

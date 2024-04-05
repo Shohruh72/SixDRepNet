@@ -4,7 +4,6 @@
 ## Features
 
 * **6D Rotation Matrix Representation**
-* **Geodesic Loss Function.**
 * **High Performance.**
 * **Easy Integration**
 * **Customizability**
@@ -22,9 +21,9 @@ The model achieved the following Mean Absolute Error (MAE) metrics across differ
 
 ### Results
 
-| Pitch | Yaw  | Roll |                                                            Pretrained weights |
-|:-----:|:----:|-----:|------------------------------------------------------------------------------:|
-| 4.92  | 3.72 | 3.44 | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best.pt) |
+| Backbone | Epochs | Pitch | Yaw | Roll | Params (M) | FLOPS (B) | Pretrained weights |
+|:--------:|:------:|------:|----:|-----:|-----------:|----------:|-------------------:|
+|   4.92   |  3.72  |  3.44 |     |      |            |           |                    |
 
 ## Installation
 
@@ -43,8 +42,6 @@ conda activate HPE
 
 ## Preparing the Dataset
 
-Our project can work with different datasets like 300W_LP, AFLW2000.
-
 1. Download the 300W-LP, AFLW2000 Datasets:
 2. Download the dataset from the
    official [project page](http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/main.htm).
@@ -54,17 +51,28 @@ Our project can work with different datasets like 300W_LP, AFLW2000.
 ## Training the Model
 
 To initiate the training process, use the following command:
-
+* Configure your dataset path in main.py for training
+* Configure Model name (default A2) in main.py for training
+* Run the below command for Single-GPU training
 ```bash
 python main.py --train
 ```
-                   
-## Inference
-
-For inference on new images, run:
-
+* Run the below command for Multi-GPU training $ is number of GPUs 
 ```bash
-python main.py --inference
+bash main.sh $ --train
+```
+
+## Testing the Model
+Configure your dataset path in main.py for testing
+Run the below command:
+```bash
+bash main.sh $ --test
+```
+## Inference
+* Configure your video path in main.py for visualizing the demo
+* Run the below command:
+```bash
+python main.py --demo
 ```
 
 
