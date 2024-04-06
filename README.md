@@ -28,12 +28,12 @@ The model achieved the following Mean Absolute Error (MAE) metrics across differ
 | **RepVGG-A2** |  **90**    |  **4.8**  | **3.7** | **3.4**  |    28.2    |    5.7    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_a2.pt)                    |
 | RepVGG-B0 |  90    |  5.0  | 3.9 | 3.5  |    15.8    |    3.4    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b0.pt)                    ||
 | RepVGG-B1 |  90    |  5.0  | 3.9 | 3.5  |    57.4    |   13.1    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1.pt)                   |
-| RepVGG-B1G2 |  90  |       |     |      |    45.7    |    9.8    |                    |
+| RepVGG-B1G2 |  90  |  4.9  | 3.6 | 3.4  |    45.7    |    9.8    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1g2.pt)                  |
 | RepVGG-B1G4 |  90  |  4.8  | 3.6 | 3.4  |    39.9    |    8.1    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1g4.pt)                    |
-| RepVGG-B2 |  90    |       |     |      |     89     |   20.4    |                    |
-| RepVGG-B2G4 |  90  |       |     |      |    61.7    |   12.6    |                    |
+| RepVGG-B2 |  90    |  4.78 | 3.4 | 3.3  |     89     |   20.4    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b2.pt)                       |
+| RepVGG-B2G4 |  90  | 4.8   | 3.6 | 3.4  |    61.7    |   12.6    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b2g4.pt)                      |
 | RepVGG-B3 |  90    |       |     |      |    123     |   29.2    |                    |
-| RepVGG-B3G4 |  90  |       |     |      |    83.8    |   17.9    |                    |
+| RepVGG-B3G4 |  90  |  4.8  | 3.7 | 3.4  |    83.8    |   17.9    |  [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b3g4.pt)                     |
 
 ## Installation
 
