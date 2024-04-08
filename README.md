@@ -32,7 +32,7 @@ The model achieved the following Mean Absolute Error (MAE) metrics across differ
 | RepVGG-B1G4 |  90  |  4.8  | 3.6 | 3.4  |    39.9    |    8.1    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b1g4.pt)                    |
 | RepVGG-B2 |  90    |  4.78 | 3.4 | 3.3  |     89     |   20.4    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b2.pt)                       |
 | RepVGG-B2G4 |  90  | 4.8   | 3.6 | 3.4  |    61.7    |   12.6    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b2g4.pt)                      |
-| RepVGG-B3 |  90    |       |     |      |    123     |   29.2    |                    |
+| RepVGG-B3 |  90    |  4.9  | 3.6 | 3.4  |    123     |   29.2    | [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b3.pt)                  |
 | RepVGG-B3G4 |  90  |  4.8  | 3.7 | 3.4  |    83.8    |   17.9    |  [model](https://github.com/Shohruh72/SixDRepNet/releases/download/v1/best_b3g4.pt)                     |
 
 ## Installation
