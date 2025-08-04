@@ -171,8 +171,8 @@ def demo(args):
     model = torch.load('./weights/best.pt', map_location='cuda')['model'].float()
     model.half()
     model.eval()
-    detector = RetinaFace(0)
-    cap = cv2.VideoCapture(0)
+    detector = FaceDetector('./weights/detection.onnx')
+    cap = cv2.VideoCapture('vid2.mp4')
 
     if not cap.isOpened():
         raise IOError("Cannot open webcam")
@@ -181,16 +181,16 @@ def demo(args):
         ret, frame = cap.read()
         if not ret:
             break
-        faces = detector(frame)
+        boxes = detector.detect(frame, (640, 640))
+        boxes = boxes.astype('int32')
 
-        for box, landmarks, score in faces:
-            if score < .95:
-                continue
-
-            x_min, y_min = int(box[0]), int(box[1])
-            x_max, y_max = int(box[2]), int(box[3])
-            bbox_width = abs(x_max - x_min)
-            bbox_height = abs(y_max - y_min)
+        for idx, box in enumerate(boxes):
+            x_min = box[0]
+            y_min = box[1]
+            x_max = box[2]
+            y_max = box[3]
+            bbox_width = x_max - x_min
+            bbox_height = y_max - y_min
 
             x_min = max(0, x_min - int(0.2 * bbox_height))
             y_min = max(0, y_min - int(0.2 * bbox_width))
@@ -215,7 +215,8 @@ def demo(args):
                     x_max - x_min)), y_min + int(.5 * (y_max - y_min)), size=bbox_width)
             print(p_pred_deg)
         cv2.imshow("Demo", frame)
-        if cv2.waitKey(1) == 27:
+        key = cv2.waitKey(1) & 0xFF
+        if key == 27 or key == ord('q'):
             break
 
     cap.release()
@@ -232,7 +233,7 @@ def main():
     parser.add_argument('--input-size', type=int, default=224)
     parser.add_argument('--train', action='store_true')
     parser.add_argument('--test', action='store_true')
-    parser.add_argument('--demo', action='store_true')
+    parser.add_argument('--demo', default=True, action='store_true')
     args = parser.parse_args()
 
     args.world_size = int(os.getenv('WORLD_SIZE', 1))
